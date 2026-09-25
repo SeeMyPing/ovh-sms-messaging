@@ -3,9 +3,10 @@
 // The trigger deletes the message when the response is 2xx and retries it
 // (up to three times) otherwise. Hence:
 //   - SMS sent: 200
-//   - transient failure (network, OVH unavailable...): 503, to be retried
-//   - permanent failure (invalid message, rejected by OVH): 200, since a
-//     retry would fail the same way; the failure is logged at error level.
+//   - transient failure (network, SMSC unavailable or throttling...): 503,
+//     to be retried
+//   - permanent failure (invalid message, rejected by the SMSC): 200, since
+//     a retry would fail the same way; the failure is logged at error level.
 package handler
 
 import (
@@ -16,16 +17,22 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/SeeMyPing/ovh-sms-messaging/internal/message"
-	"github.com/SeeMyPing/ovh-sms-messaging/internal/ovh"
+	"github.com/SeeMyPing/sqs-to-smpp-gateway/internal/message"
 )
 
 // maxBodySize bounds the accepted message size. Queue messages are far smaller.
 const maxBodySize = 256 << 10
 
-// Sender sends an SMS.
+// Sender sends an SMS and returns the IDs assigned by the provider.
+//
+// An error implementing Permanent() bool, and returning true, means the
+// message itself was rejected: it is dropped instead of being retried.
 type Sender interface {
-	Send(ctx context.Context, sms message.SMS) (ovh.Result, error)
+	Send(ctx context.Context, sms message.SMS) ([]string, error)
+}
+
+type permanent interface {
+	Permanent() bool
 }
 
 // New returns the HTTP handler serving POST / (queue messages) and
@@ -72,12 +79,12 @@ func (h *handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger = logger.With("to", maskAll(sms.To), "tag", sms.Tag)
-	res, err := h.sender.Send(ctx, sms)
+	logger = logger.With("to", message.Mask(sms.To))
+	ids, err := h.sender.Send(ctx, sms)
 	if err != nil {
-		var apiErr *ovh.APIError
-		if errors.As(err, &apiErr) && apiErr.Permanent() {
-			logger.ErrorContext(ctx, "message dropped: rejected by OVH", "error", err)
+		var p permanent
+		if errors.As(err, &p) && p.Permanent() {
+			logger.ErrorContext(ctx, "message dropped: rejected", "error", err)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -86,16 +93,8 @@ func (h *handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.InfoContext(ctx, "SMS sent", "sms_ids", res.SMSIDs, "credit_left", res.CreditLeft)
+	logger.InfoContext(ctx, "SMS sent", "message_ids", ids)
 	w.WriteHeader(http.StatusOK)
-}
-
-func maskAll(numbers []string) []string {
-	masked := make([]string, len(numbers))
-	for i, n := range numbers {
-		masked[i] = message.Mask(n)
-	}
-	return masked
 }
 
 // safeHeaders returns the request headers without credentials, for debugging

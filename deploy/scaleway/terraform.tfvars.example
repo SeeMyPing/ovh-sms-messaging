@@ -1,0 +1,8 @@
+# Tag published by the CI: sha-<short commit> or a release version.
+image_tag = "sha-0123456"
+
+smpp_addr        = "smpp.example.com:2775"
+smpp_system_id   = "my-system-id"
+smpp_source_addr = "MYAPP"
+# Prefer TF_VAR_smpp_password to keep the password out of files.
+# smpp_password = ""

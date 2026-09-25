@@ -1,35 +1,42 @@
-# ovh-sms-messaging
+# sqs-to-smpp-gateway
 
-Envoie des SMS via l'API [http2sms d'OVHcloud](https://help.ovhcloud.com/csm/en-gb-sms-sending-via-url-http2sms)
-à partir de messages déposés dans une queue [Scaleway Queues](https://www.scaleway.com/en/docs/queues/).
+Envoie en SMS, via le protocole **SMPP 3.4**, les messages déposés dans une queue.
+L'application ne dépend d'aucun fournisseur SMS : elle parle à n'importe quel SMSC SMPP.
 
-L'application tourne dans un **Serverless Container** Scaleway. Un **trigger** lit la queue
-et pousse chaque message en `POST` HTTP vers le conteneur : pas de polling, pas de SDK,
-uniquement la bibliothèque standard Go.
+Elle reçoit les messages de la queue en `POST` HTTP. Le déploiement fourni utilise
+[Scaleway Queues](https://www.scaleway.com/en/docs/queues/) et un **trigger** qui pousse
+chaque message vers un **Serverless Container** (voir [`deploy/`](deploy)).
 
 ```
-Producteur ──▶ Scaleway Queue ──Trigger──▶ POST / ──▶ Serverless Container ──▶ OVH http2sms
-                    │
-                    └──▶ DLQ
+Producteur ──▶ Queue ──Trigger──▶ POST / ──▶ Conteneur ──SMPP──▶ SMSC
+                 │
+                 └──▶ DLQ
 ```
 
 ## Format du message
 
 ```json
 {
-  "to": ["+33612345678", "+33700000000"],
+  "to": "+33612345678",
   "message": "Votre code est 123456",
-  "sender": "MYAPP",
-  "tag": "otp"
+  "sender": "MYAPP"
 }
 ```
 
 | Champ | Obligatoire | Description |
 |---|---|---|
-| `to` | oui | Destinataires au format international (`+33…` ou `0033…`, espaces, points et tirets tolérés). Les numéros nationaux (`06…`) sont refusés. |
-| `message` | oui | Texte du SMS. |
-| `sender` | non | Expéditeur déclaré sur le compte SMS. Par défaut : `OVH_SMS_SENDER`. |
-| `tag` | non | Marqueur OVH, 20 caractères max. |
+| `to` | oui | **Un seul** destinataire, au format international (`+33…` ou `0033…`, espaces, points et tirets tolérés). Les numéros nationaux (`06…`) sont refusés. |
+| `message` | oui | Texte du SMS, 1600 caractères max. |
+| `sender` | non | Expéditeur : alphanumérique (11 caractères ASCII max), numéro court ou numéro international `+…`. Par défaut : `SMPP_SOURCE_ADDR`. Le fournisseur peut n'accepter que certains expéditeurs. |
+
+Pour envoyer à plusieurs destinataires, déposer un message par destinataire.
+
+### Encodage et messages longs
+
+- **GSM 03.38** (`data_coding` 0) si tous les caractères en font partie : 160 caractères par SMS.
+- **UCS-2** (`data_coding` 8) sinon (accents hors GSM, emojis, alphabets non latins) : 70 caractères par SMS.
+- Au-delà, le message part en plusieurs SMS concaténés (UDH, `esm_class` 0x40) :
+  153 caractères GSM ou 67 UCS-2 par partie. Un caractère n'est jamais coupé entre deux parties.
 
 ## Réponses au trigger
 
@@ -37,62 +44,77 @@ Le trigger supprime le message sur une réponse 2xx et le réessaie (3 fois max)
 
 | Cas | Réponse | Effet |
 |---|---|---|
-| SMS envoyé (statut OVH 100–199) | `200` | Message supprimé |
-| Erreur temporaire : réseau, timeout, HTTP ≠ 200, statut OVH 401 (IP non autorisée)… | `503` | Réessayé, puis DLQ |
-| Erreur définitive : JSON invalide, numéro invalide, statut OVH 201/202 | `200` | Message supprimé, erreur loguée |
+| SMS accepté par le SMSC (`submit_sm_resp` OK) | `200` | Message supprimé |
+| Message invalide : JSON, numéro, longueur, expéditeur | `200` | Message supprimé, erreur loguée |
+| Refusé par le SMSC pour le message lui-même : `ESME_RINVDSTADR`, `ESME_RINVDSTTON`, `ESME_RINVDSTNPI`, `ESME_RINVMSGLEN` | `200` | Message supprimé, erreur loguée |
+| Tout le reste : réseau, timeout, bind refusé (identifiants, IP), `ESME_RTHROTTLED`, `ESME_RMSGQFUL`, `ESME_RSYSERR`, expéditeur refusé… | `503` | Réessayé, puis DLQ |
 
 Les erreurs définitives répondent `200` exprès : les réessayer échouerait de la même façon.
+Les erreurs qui dépendent de la configuration (identifiants, IP autorisées, expéditeur)
+sont traitées comme temporaires : les messages restent récupérables dans la DLQ.
+
+« Accepté par le SMSC » ne veut pas dire « livré » : les accusés de réception (DLR)
+ne sont pas gérés.
+
+## Session SMPP
+
+- Bind **transmitter** au premier message, puis session conservée tant que l'instance vit
+  et partagée entre les requêtes concurrentes.
+- `enquire_link` périodique ; rebind automatique si la connexion tombe.
+- `unbind` à l'arrêt (SIGTERM), après la fin des envois en cours.
+- Chaque instance ouvre sa propre session : le nombre d'instances ne doit pas dépasser
+  le nombre de binds autorisés par le fournisseur.
 
 ## Configuration
 
 | Variable | Obligatoire | Défaut | Description |
 |---|---|---|---|
-| `OVH_SMS_ACCOUNT` | oui | | Compte SMS, ex. `sms-xx11111-1` |
-| `OVH_SMS_LOGIN` | oui | | Utilisateur SMS (créé dans l'espace client OVH, ce n'est pas le NIC) |
-| `OVH_SMS_PASSWORD` | oui | | Mot de passe de l'utilisateur SMS — **à déclarer en secret** |
-| `OVH_SMS_SENDER` | oui | | Expéditeur par défaut |
-| `OVH_SMS_NO_STOP` | non | `false` | `true` pour retirer la mention STOP (SMS non commerciaux) |
-| `OVH_TIMEOUT` | non | `10s` | Timeout de l'appel OVH |
-| `OVH_SMS_ENDPOINT` | non | `https://www.ovh.com/cgi-bin/sms/http2sms.cgi` | Utile pour les tests |
+| `SMPP_ADDR` | oui | | Adresse du SMSC, `hôte:port` |
+| `SMPP_SYSTEM_ID` | oui | | Identifiant SMPP |
+| `SMPP_PASSWORD` | oui | | Mot de passe SMPP — **à déclarer en secret** |
+| `SMPP_SOURCE_ADDR` | oui | | Expéditeur par défaut (mêmes règles que `sender`) |
+| `SMPP_SYSTEM_TYPE` | non | vide | `system_type`, si le fournisseur en demande un |
+| `SMPP_TLS` | non | `false` | Connexion TLS au SMSC |
+| `SMPP_CONNECT_TIMEOUT` | non | `10s` | Connexion TCP et bind |
+| `SMPP_SUBMIT_TIMEOUT` | non | `10s` | Attente de chaque `submit_sm_resp` |
+| `SMPP_ENQUIRE_LINK` | non | `30s` | Période du keep-alive |
 | `LOG_LEVEL` | non | `info` | `debug`, `info`, `warn`, `error` |
-| `PORT` | non | `8080` | Fourni par Scaleway |
+| `PORT` | non | `8080` | Port HTTP |
 
-Les logs sont en JSON sur la sortie standard (visibles dans Cockpit). Les numéros y sont
-masqués et le mot de passe n'y apparaît jamais. En `debug`, les headers envoyés par le
-trigger sont logués (hors credentials).
+Les logs sont en JSON sur la sortie standard. Les numéros y sont masqués et le mot de
+passe n'y apparaît jamais. En `debug`, les headers HTTP reçus sont logués (hors credentials).
 
 ## Développement
+
+Avec le simulateur [smscsim](https://github.com/ukarim/smscsim) :
 
 ```sh
 go test ./...
 
-OVH_SMS_ACCOUNT=sms-xx11111-1 OVH_SMS_LOGIN=user OVH_SMS_PASSWORD=secret OVH_SMS_SENDER=MYAPP \
-  go run ./cmd/ovh-sms-messaging
+docker run -d -p 2775:2775 -p 12775:12775 ukarim/smscsim
 
-curl -i -X POST localhost:8080/ -d '{"to":["+33612345678"],"message":"test"}'
+SMPP_ADDR=localhost:2775 SMPP_SYSTEM_ID=test SMPP_PASSWORD=test SMPP_SOURCE_ADDR=MYAPP \
+  go run ./cmd/sqs-to-smpp-gateway
+
+curl -i -X POST localhost:8080/ -d '{"to":"+33612345678","message":"test"}'
 curl -i localhost:8080/healthz
 ```
 
-## Déploiement sur Scaleway
+Les tests du client SMPP tournent contre un faux SMSC embarqué
+([`internal/smpp/fake_smsc_test.go`](internal/smpp/fake_smsc_test.go)).
 
-Le dossier [`deploy/terraform`](deploy/terraform) crée toute l'infrastructure ci-dessous.
-Les étapes manuelles équivalentes :
+## Déploiement
 
-1. **Image** — publiée par la [CI](#ci) sur `ghcr.io/seemyping/ovh-sms-messaging`
-   (`linux/amd64`, seule plateforme acceptée par Scaleway Serverless Containers).
-2. **Queues** — créer une queue Standard et sa DLQ (même projet, même région) :
-   - DLQ reliée par une redrive policy, `maxReceiveCount` = 4 ;
-   - **durée de rétention** réglée explicitement, suffisante pour absorber les pics et les cold starts ;
-   - **visibility timeout** supérieur au temps de traitement (30 s ou plus avec `OVH_TIMEOUT=10s`).
-3. **Conteneur** :
-   - privacy **privée** — un conteneur public permettrait à n'importe qui d'envoyer des SMS ;
-   - `min_scale = 0`, `max_scale` bas (1 ou 2) pour ne pas dépasser le débit accepté par OVH ;
-   - variables ci-dessus, avec `OVH_SMS_PASSWORD` en *secret environment variable*.
-4. **Trigger** — onglet *Triggers* du conteneur, type Scaleway Queues, sur la queue principale.
-5. **OVH** — restreindre l'utilisateur SMS aux IP sortantes utilisées, si possible.
+| Cible | Dossier |
+|---|---|
+| Scaleway (Queues + Serverless Containers) | [`deploy/scaleway`](deploy/scaleway) |
 
-Au premier déploiement, vérifier que le trigger atteint bien le conteneur privé, et
-passer `LOG_LEVEL=debug` le temps de voir les headers qu'il envoie.
+L'image est publiée par la [CI](#ci) sur `ghcr.io/seemyping/sqs-to-smpp-gateway`
+(`linux/amd64`).
+
+**IP sortante** : beaucoup de fournisseurs SMPP n'acceptent que des IP déclarées.
+Une plateforme serverless n'a en général pas d'IP de sortie fixe : dans ce cas le bind
+échoue, les messages sont réessayés puis conservés en DLQ.
 
 ## CI
 
@@ -101,7 +123,7 @@ Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) lance trois j
 | Job | Contenu |
 |---|---|
 | `Go` | `gofmt`, `go vet`, `go test -race` |
-| `Terraform` | `terraform fmt -check`, `terraform validate` |
+| `Terraform` | `terraform fmt -check`, `terraform validate` sur `deploy/scaleway` |
 | `Image` | Build de l'image `linux/amd64` ; publiée sur ghcr.io hors pull requests |
 
 Tags publiés :
@@ -123,14 +145,15 @@ Les rulesets ne sont pas appliqués depuis le dépôt : il faut les importer une
 - Interface : *Settings → Rules → Rulesets → New ruleset → Import a ruleset*, choisir le fichier.
 - CLI :
   ```sh
-  gh api -X POST repos/SeeMyPing/ovh-sms-messaging/rulesets --input .github/rulesets/main.json
+  gh api -X POST repos/SeeMyPing/sqs-to-smpp-gateway/rulesets --input .github/rulesets/main.json
   ```
 
 Après une modification du fichier, mettre à jour le ruleset existant
-(`gh api -X PUT repos/SeeMyPing/ovh-sms-messaging/rulesets/<id> --input …`).
+(`gh api -X PUT repos/SeeMyPing/sqs-to-smpp-gateway/rulesets/<id> --input …`).
 
 ## Limites connues
 
-- **SMS en double possibles** : la livraison est « au moins une fois ». Si OVH envoie le SMS
-  mais que la réponse se perd (timeout, arrêt du conteneur), le trigger rejoue le message.
-- http2sms transmet le mot de passe dans l'URL : c'est imposé par l'API OVH.
+- **SMS en double possibles** : la livraison est « au moins une fois ». Si le SMSC accepte
+  le SMS mais que la réponse se perd (timeout, arrêt du conteneur), le trigger rejoue le
+  message. Pour un message long, un échec sur une partie fait renvoyer toutes les parties.
+- **Pas de DLR** : les accusés de réception ne sont pas remontés.

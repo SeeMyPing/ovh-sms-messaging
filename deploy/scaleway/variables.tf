@@ -13,7 +13,7 @@ variable "region" {
 variable "name" {
   description = "Prefix used to name every resource."
   type        = string
-  default     = "ovh-sms"
+  default     = "sqs-to-smpp"
 }
 
 # Image
@@ -21,7 +21,7 @@ variable "name" {
 variable "image" {
   description = "Container image, without tag. Published by the CI on every merge to main."
   type        = string
-  default     = "ghcr.io/seemyping/ovh-sms-messaging"
+  default     = "ghcr.io/seemyping/sqs-to-smpp-gateway"
 }
 
 variable "image_tag" {
@@ -32,7 +32,7 @@ variable "image_tag" {
 # Container
 
 variable "max_scale" {
-  description = "Maximum number of container instances. Keep it low to stay within the OVH sending rate."
+  description = "Maximum number of container instances. Each one opens its own SMPP bind: stay within the number of binds allowed by the provider."
   type        = number
   default     = 1
 }
@@ -44,7 +44,7 @@ variable "memory_limit_bytes" {
 }
 
 variable "container_timeout" {
-  description = "Maximum processing time of a request, in seconds. Must be greater than ovh_timeout."
+  description = "Maximum processing time of a request, in seconds. Must leave room for the SMPP bind and every part of a long message."
   type        = number
   default     = 30
 }
@@ -81,37 +81,43 @@ variable "max_receive_count" {
   default     = 4
 }
 
-# OVH
+# SMPP
 
-variable "ovh_sms_account" {
-  description = "OVH SMS account, e.g. sms-xx11111-1."
+variable "smpp_addr" {
+  description = "SMSC address, host:port."
   type        = string
 }
 
-variable "ovh_sms_login" {
-  description = "OVH SMS user."
-  type        = string
-}
-
-variable "ovh_sms_password" {
-  description = "OVH SMS user password."
-  type        = string
-  sensitive   = true
-}
-
-variable "ovh_sms_sender" {
-  description = "Default sender, declared on the OVH SMS account."
-  type        = string
-}
-
-variable "ovh_sms_no_stop" {
-  description = "Remove the STOP mention (non-advertising SMS only)."
+variable "smpp_tls" {
+  description = "Connect to the SMSC over TLS."
   type        = bool
   default     = false
 }
 
-variable "ovh_timeout" {
-  description = "Timeout of the OVH call (Go duration)."
+variable "smpp_system_id" {
+  description = "SMPP system_id (login)."
+  type        = string
+}
+
+variable "smpp_password" {
+  description = "SMPP password."
+  type        = string
+  sensitive   = true
+}
+
+variable "smpp_system_type" {
+  description = "SMPP system_type, if the provider requires one."
+  type        = string
+  default     = ""
+}
+
+variable "smpp_source_addr" {
+  description = "Default sender: alphanumeric (11 characters max), short code or +international number."
+  type        = string
+}
+
+variable "smpp_submit_timeout" {
+  description = "Wait for each submit_sm_resp (Go duration)."
   type        = string
   default     = "10s"
 }

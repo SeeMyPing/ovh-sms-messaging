@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  IMAGE: ghcr.io/seemyping/ovh-sms-messaging
+  IMAGE: ghcr.io/seemyping/sqs-to-smpp-gateway
 
 jobs:
   go:
@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: deploy/terraform
+        working-directory: deploy/scaleway
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4

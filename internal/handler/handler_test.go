@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,8 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SeeMyPing/ovh-sms-messaging/internal/message"
-	"github.com/SeeMyPing/ovh-sms-messaging/internal/ovh"
+	"github.com/SeeMyPing/sqs-to-smpp-gateway/internal/message"
 )
 
 type fakeSender struct {
@@ -19,12 +19,17 @@ type fakeSender struct {
 	sent []message.SMS
 }
 
-func (f *fakeSender) Send(_ context.Context, sms message.SMS) (ovh.Result, error) {
+func (f *fakeSender) Send(_ context.Context, sms message.SMS) ([]string, error) {
 	f.sent = append(f.sent, sms)
-	return ovh.Result{SMSIDs: []string{"1"}}, f.err
+	return []string{"1"}, f.err
 }
 
-const validBody = `{"to":["+33612345678"],"message":"hello"}`
+type statusError struct{ permanent bool }
+
+func (e statusError) Error() string   { return "rejected" }
+func (e statusError) Permanent() bool { return e.permanent }
+
+const validBody = `{"to":"+33612345678","message":"hello"}`
 
 func TestHandleMessage(t *testing.T) {
 	tests := []struct {
@@ -36,10 +41,10 @@ func TestHandleMessage(t *testing.T) {
 	}{
 		{name: "sent", body: validBody, wantCode: http.StatusOK, wantSent: 1},
 		{name: "invalid JSON", body: `nope`, wantCode: http.StatusOK},
-		{name: "invalid number", body: `{"to":["0612345678"],"message":"hello"}`, wantCode: http.StatusOK},
+		{name: "invalid number", body: `{"to":"0612345678","message":"hello"}`, wantCode: http.StatusOK},
 		{name: "body too large", body: `{"message":"` + strings.Repeat("a", maxBodySize) + `"}`, wantCode: http.StatusOK},
-		{name: "rejected by OVH", body: validBody, sendErr: &ovh.APIError{Status: 202, Message: "Invalid"}, wantCode: http.StatusOK, wantSent: 1},
-		{name: "OVH unauthorized IP", body: validBody, sendErr: &ovh.APIError{Status: 401, Message: "No IP"}, wantCode: http.StatusServiceUnavailable, wantSent: 1},
+		{name: "permanent rejection", body: validBody, sendErr: fmt.Errorf("wrapped: %w", statusError{permanent: true}), wantCode: http.StatusOK, wantSent: 1},
+		{name: "transient rejection", body: validBody, sendErr: statusError{permanent: false}, wantCode: http.StatusServiceUnavailable, wantSent: 1},
 		{name: "network error", body: validBody, sendErr: errors.New("timeout"), wantCode: http.StatusServiceUnavailable, wantSent: 1},
 	}
 	for _, tt := range tests {

@@ -1,5 +1,6 @@
-// Command ovh-sms-messaging receives the messages pushed by a Scaleway Queues
-// trigger and sends them as SMS through the OVHcloud http2sms API.
+// Command sqs-to-smpp-gateway receives the queue messages pushed over HTTP
+// (e.g. by a Scaleway Queues trigger) and sends them as SMS to an SMSC over
+// SMPP.
 package main
 
 import (
@@ -13,9 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/SeeMyPing/ovh-sms-messaging/internal/config"
-	"github.com/SeeMyPing/ovh-sms-messaging/internal/handler"
-	"github.com/SeeMyPing/ovh-sms-messaging/internal/ovh"
+	"github.com/SeeMyPing/sqs-to-smpp-gateway/internal/config"
+	"github.com/SeeMyPing/sqs-to-smpp-gateway/internal/handler"
+	"github.com/SeeMyPing/sqs-to-smpp-gateway/internal/smpp"
 )
 
 func main() {
@@ -33,9 +34,10 @@ func run() error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
 
+	client := smpp.NewClient(cfg.SMPP, logger)
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           handler.New(ovh.NewClient(cfg.OVH), logger),
+		Handler:           handler.New(client, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -54,13 +56,14 @@ func run() error {
 	case <-ctx.Done():
 	}
 
-	// Let in-flight sends finish: an interrupted request is retried by the
-	// trigger, which may send the SMS twice.
+	// Let in-flight sends finish (an interrupted request is retried by the
+	// trigger, which may send the SMS twice), then unbind.
 	logger.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.OVH.Timeout+5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(),
+		cfg.SMPP.ConnectTimeout+cfg.SMPP.SubmitTimeout+5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	return nil
+	return client.Close()
 }
