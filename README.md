@@ -75,11 +75,11 @@ curl -i localhost:8080/healthz
 
 ## Déploiement sur Scaleway
 
-1. **Image** — Scaleway Serverless Containers exige une image `linux/amd64` :
-   ```sh
-   docker build --platform linux/amd64 -t rg.fr-par.scw.cloud/<namespace>/ovh-sms-messaging:<version> .
-   docker push rg.fr-par.scw.cloud/<namespace>/ovh-sms-messaging:<version>
-   ```
+Le dossier [`deploy/terraform`](deploy/terraform) crée toute l'infrastructure ci-dessous.
+Les étapes manuelles équivalentes :
+
+1. **Image** — publiée par la [CI](#ci) sur `ghcr.io/seemyping/ovh-sms-messaging`
+   (`linux/amd64`, seule plateforme acceptée par Scaleway Serverless Containers).
 2. **Queues** — créer une queue Standard et sa DLQ (même projet, même région) :
    - DLQ reliée par une redrive policy, `maxReceiveCount` = 4 ;
    - **durée de rétention** réglée explicitement, suffisante pour absorber les pics et les cold starts ;
@@ -93,6 +93,41 @@ curl -i localhost:8080/healthz
 
 Au premier déploiement, vérifier que le trigger atteint bien le conteneur privé, et
 passer `LOG_LEVEL=debug` le temps de voir les headers qu'il envoie.
+
+## CI
+
+Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) lance trois jobs :
+
+| Job | Contenu |
+|---|---|
+| `Go` | `gofmt`, `go vet`, `go test -race` |
+| `Terraform` | `terraform fmt -check`, `terraform validate` |
+| `Image` | Build de l'image `linux/amd64` ; publiée sur ghcr.io hors pull requests |
+
+Tags publiés :
+
+| Événement | Tags |
+|---|---|
+| Pull request | aucun (build seul) |
+| Merge sur `main` | `sha-<commit>`, `latest` |
+| Tag `vX.Y.Z` | `X.Y.Z`, `sha-<commit>` |
+
+### Protection de `main`
+
+[`.github/rulesets/main.json`](.github/rulesets/main.json) définit un ruleset GitHub :
+pull request obligatoire (sans approbation requise, conversations résolues), jobs `Go`,
+`Terraform` et `Image` verts sur une branche à jour, ni force-push ni suppression.
+
+Les rulesets ne sont pas appliqués depuis le dépôt : il faut les importer une fois.
+
+- Interface : *Settings → Rules → Rulesets → New ruleset → Import a ruleset*, choisir le fichier.
+- CLI :
+  ```sh
+  gh api -X POST repos/SeeMyPing/ovh-sms-messaging/rulesets --input .github/rulesets/main.json
+  ```
+
+Après une modification du fichier, mettre à jour le ruleset existant
+(`gh api -X PUT repos/SeeMyPing/ovh-sms-messaging/rulesets/<id> --input …`).
 
 ## Limites connues
 
