@@ -94,16 +94,17 @@ resource "scaleway_container" "main" {
   }
 
   environment_variables = {
-    OVH_SMS_ACCOUNT = var.ovh_sms_account
-    OVH_SMS_LOGIN   = var.ovh_sms_login
-    OVH_SMS_SENDER  = var.ovh_sms_sender
-    OVH_SMS_NO_STOP = tostring(var.ovh_sms_no_stop)
-    OVH_TIMEOUT     = var.ovh_timeout
-    LOG_LEVEL       = var.log_level
+    SMPP_ADDR           = var.smpp_addr
+    SMPP_TLS            = tostring(var.smpp_tls)
+    SMPP_SYSTEM_ID      = var.smpp_system_id
+    SMPP_SYSTEM_TYPE    = var.smpp_system_type
+    SMPP_SOURCE_ADDR    = var.smpp_source_addr
+    SMPP_SUBMIT_TIMEOUT = var.smpp_submit_timeout
+    LOG_LEVEL           = var.log_level
   }
 
   secret_environment_variables = {
-    OVH_SMS_PASSWORD = var.ovh_sms_password
+    SMPP_PASSWORD = var.smpp_password
   }
 
   lifecycle {

@@ -2,7 +2,7 @@ package message
 
 import (
 	"errors"
-	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -45,36 +45,71 @@ func TestNormalizeNumber(t *testing.T) {
 }
 
 func TestParse(t *testing.T) {
-	got, err := Parse([]byte(`{"to":["+33612345678","0033700000000"],"message":"hello","sender":"MYAPP","tag":"otp"}`))
+	got, err := Parse([]byte(`{"to":"0033612345678","message":"hello","sender":"MYAPP"}`))
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	want := SMS{
-		To:      []string{"+33612345678", "+33700000000"},
-		Message: "hello",
-		Sender:  "MYAPP",
-		Tag:     "otp",
-	}
-	if !reflect.DeepEqual(got, want) {
+	want := SMS{To: "+33612345678", Message: "hello", Sender: "MYAPP"}
+	if got != want {
 		t.Fatalf("Parse = %+v, want %+v", got, want)
 	}
 }
 
 func TestParseInvalid(t *testing.T) {
 	tests := map[string]string{
-		"not JSON":       `hello`,
-		"to as string":   `{"to":"+33612345678","message":"hello"}`,
-		"no recipient":   `{"message":"hello"}`,
-		"empty to":       `{"to":[],"message":"hello"}`,
-		"empty message":  `{"to":["+33612345678"],"message":"  "}`,
-		"national phone": `{"to":["0612345678"],"message":"hello"}`,
-		"tag too long":   `{"to":["+33612345678"],"message":"hello","tag":"123456789012345678901"}`,
+		"not JSON":         `hello`,
+		"to as array":      `{"to":["+33612345678"],"message":"hello"}`,
+		"no recipient":     `{"message":"hello"}`,
+		"empty message":    `{"to":"+33612345678","message":"  "}`,
+		"message too long": `{"to":"+33612345678","message":"` + strings.Repeat("a", MaxLength+1) + `"}`,
+		"national phone":   `{"to":"0612345678","message":"hello"}`,
+		"invalid sender":   `{"to":"+33612345678","message":"hello","sender":"TOO-LONG-NAME"}`,
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(body))
 			if !errors.Is(err, ErrInvalid) {
-				t.Fatalf("Parse(%s) error = %v, want ErrInvalid", body, err)
+				t.Fatalf("Parse(%.60s) error = %v, want ErrInvalid", body, err)
+			}
+		})
+	}
+}
+
+func TestParseMaxLength(t *testing.T) {
+	body := `{"to":"+33612345678","message":"` + strings.Repeat("é", MaxLength) + `"}`
+	if _, err := Parse([]byte(body)); err != nil {
+		t.Fatalf("Parse error for %d characters: %v", MaxLength, err)
+	}
+}
+
+func TestNormalizeSender(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{in: "MYAPP", want: "MYAPP"},
+		{in: "My App 2", want: "My App 2"},
+		{in: "12345678901", want: "12345678901"},
+		{in: "36180", want: "36180"},
+		{in: "+33 6 12 34 56 78", want: "+33612345678"},
+		{in: "123456789012", wantErr: false, want: "123456789012"},
+		{in: "ABCDEFGHIJKL", wantErr: true},
+		{in: "Café", wantErr: true},
+		{in: "1234567890123456", wantErr: true},
+		{in: "+0612345678", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := NormalizeSender(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("NormalizeSender(%q) = %q, want error", tt.in, got)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("NormalizeSender(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
 			}
 		})
 	}
