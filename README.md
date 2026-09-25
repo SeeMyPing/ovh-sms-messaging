@@ -75,6 +75,9 @@ curl -i localhost:8080/healthz
 
 ## Déploiement sur Scaleway
 
+Le dossier [`deploy/terraform`](deploy/terraform) crée toute l'infrastructure ci-dessous.
+Les étapes manuelles équivalentes :
+
 1. **Image** — Scaleway Serverless Containers exige une image `linux/amd64` :
    ```sh
    docker build --platform linux/amd64 -t rg.fr-par.scw.cloud/<namespace>/ovh-sms-messaging:<version> .

@@ -1,0 +1,7 @@
+image_tag = "v0.1.0"
+
+ovh_sms_account = "sms-xx11111-1"
+ovh_sms_login   = "my-sms-user"
+ovh_sms_sender  = "MYAPP"
+# Prefer TF_VAR_ovh_sms_password to keep the password out of files.
+# ovh_sms_password = ""
