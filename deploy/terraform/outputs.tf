@@ -21,6 +21,7 @@ output "dead_letter_queue_url" {
 output "producer_access_key" {
   description = "SQS access key allowed to publish to the queue."
   value       = scaleway_mnq_sqs_credentials.producer.access_key
+  sensitive   = true
 }
 
 output "producer_secret_key" {
