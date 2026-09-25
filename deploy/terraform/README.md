@@ -4,7 +4,6 @@ Crée toute l'infrastructure décrite dans le [README principal](../../README.md
 
 | Ressource | Rôle |
 |---|---|
-| `scaleway_registry_namespace` | Registry privé pour l'image |
 | `scaleway_mnq_sqs` | Activation de Scaleway Queues sur le projet |
 | `scaleway_mnq_sqs_credentials` ×3 | `terraform` (gestion des queues), `trigger` (lecture), `producer` (publication) |
 | `scaleway_mnq_sqs_queue` ×2 | Queue principale + DLQ (`max_receive_count` = 4) |
@@ -22,29 +21,24 @@ Crée toute l'infrastructure décrite dans le [README principal](../../README.md
 
 ## Déploiement
 
-Le conteneur a besoin que l'image existe dans le registry, qui est lui-même créé par
-Terraform. Le premier déploiement se fait donc en deux temps.
+L'image est construite et publiée sur `ghcr.io/seemyping/ovh-sms-messaging` par la CI à
+chaque merge sur `main` (voir le [README principal](../../README.md#ci)). Choisir le tag
+`sha-<commit>` à déployer dans les packages GitHub du dépôt.
 
 ```sh
 cd deploy/terraform
-cp terraform.tfvars.example terraform.tfvars   # à compléter
+cp terraform.tfvars.example terraform.tfvars   # à compléter, dont image_tag
 export TF_VAR_ovh_sms_password='...'
 
 terraform init
-
-# 1. Registry seul, puis push de l'image
-terraform apply -target=scaleway_registry_namespace.main
-REGISTRY=$(terraform output -raw registry_endpoint)
-scw registry login   # ou : docker login rg.fr-par.scw.cloud -u nologin -p "$SCW_SECRET_KEY"
-docker build --platform linux/amd64 -t "$REGISTRY/ovh-sms-messaging:v0.1.0" ../..
-docker push "$REGISTRY/ovh-sms-messaging:v0.1.0"
-
-# 2. Le reste
 terraform apply
 ```
 
-Pour les versions suivantes : pousser une image avec un **nouveau tag**, changer `image_tag`,
-puis `terraform apply`. Réutiliser un tag ne redéploie pas le conteneur.
+Pour les versions suivantes : changer `image_tag`, puis `terraform apply`. Utiliser les tags
+`sha-…` (ou de version) plutôt que `latest` : réutiliser un tag ne redéploie pas le conteneur.
+
+Le package ghcr.io doit être **public** pour que Scaleway puisse tirer l'image sans
+identifiants (Package settings → Change visibility).
 
 Committer le `.terraform.lock.hcl` créé par `terraform init`. Pour qu'il fonctionne sur
 tous les postes : `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64`.
@@ -67,7 +61,8 @@ aws sqs send-message --region fr-par \
 
 | Variable | Défaut | Description |
 |---|---|---|
-| `image_tag` | — | Tag de l'image à déployer |
+| `image_tag` | — | Tag de l'image à déployer (`sha-<commit>`) |
+| `image` | `ghcr.io/seemyping/ovh-sms-messaging` | Image sans tag |
 | `ovh_sms_account`, `ovh_sms_login`, `ovh_sms_sender` | — | Compte SMS OVH |
 | `ovh_sms_password` | — | Sensible : passer par `TF_VAR_ovh_sms_password` |
 | `region` | `fr-par` | Région Scaleway |

@@ -18,8 +18,14 @@ variable "name" {
 
 # Image
 
+variable "image" {
+  description = "Container image, without tag. Published by the CI on every merge to main."
+  type        = string
+  default     = "ghcr.io/seemyping/ovh-sms-messaging"
+}
+
 variable "image_tag" {
-  description = "Tag of the image pushed to the registry. Use immutable tags (version, commit SHA): changing it redeploys the container."
+  description = "Image tag to deploy: sha-<commit> or a release version. Use immutable tags: changing it redeploys the container, reusing one does not."
   type        = string
 }
 

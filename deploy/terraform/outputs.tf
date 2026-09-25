@@ -1,8 +1,3 @@
-output "registry_endpoint" {
-  description = "Registry to push the image to: <registry_endpoint>/ovh-sms-messaging:<image_tag>."
-  value       = scaleway_registry_namespace.main.endpoint
-}
-
 output "sqs_endpoint" {
   description = "SQS endpoint used by producers."
   value       = scaleway_mnq_sqs.main.endpoint

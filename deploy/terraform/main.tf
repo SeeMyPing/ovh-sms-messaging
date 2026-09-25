@@ -1,10 +1,3 @@
-# Registry
-
-resource "scaleway_registry_namespace" "main" {
-  name      = var.name
-  is_public = false
-}
-
 # Queues
 
 resource "scaleway_mnq_sqs" "main" {}
@@ -78,7 +71,7 @@ resource "scaleway_container_namespace" "main" {
 resource "scaleway_container" "main" {
   name         = var.name
   namespace_id = scaleway_container_namespace.main.id
-  image        = "${scaleway_registry_namespace.main.endpoint}/ovh-sms-messaging:${var.image_tag}"
+  image        = "${var.image}:${var.image_tag}"
   port         = 8080
 
   # Only the trigger may call the container: a public one would let anyone
