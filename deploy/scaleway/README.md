@@ -7,7 +7,7 @@ Crée toute l'infrastructure décrite dans le [README principal](../../README.md
 | `scaleway_mnq_sqs` | Activation de Scaleway Queues sur le projet |
 | `scaleway_mnq_sqs_credentials` ×3 | `terraform` (gestion des queues), `trigger` (lecture), `producer` (publication) |
 | `scaleway_mnq_sqs_queue` ×2 | Queue principale + DLQ (`max_receive_count` = 4) |
-| `scaleway_container_namespace`, `scaleway_container` | Conteneur **privé**, `min_scale` 0, mot de passe SMPP en secret |
+| `scaleway_container_namespace`, `scaleway_container` | Conteneur **privé**, `min_scale` 0, mot de passe ou clé API en secret |
 | `scaleway_container_trigger` | Trigger SQS → `POST /` sur le conteneur |
 
 ## Prérequis
@@ -17,7 +17,8 @@ Crée toute l'infrastructure décrite dans le [README principal](../../README.md
   ```sh
   export SCW_ACCESS_KEY=... SCW_SECRET_KEY=... SCW_DEFAULT_PROJECT_ID=...
   ```
-- Un compte SMPP chez un fournisseur : adresse du SMSC, `system_id`, mot de passe, expéditeur autorisé.
+- Un compte chez un fournisseur SMS : accès SMPP (adresse du SMSC, `system_id`, mot de passe)
+  ou API Twilio, OVH (http2sms) ou ClickSend, et un expéditeur autorisé.
 
 ## Déploiement
 
@@ -28,7 +29,7 @@ chaque merge sur `main` (voir le [README principal](../../README.md#ci)). Choisi
 ```sh
 cd deploy/scaleway
 cp terraform.tfvars.example terraform.tfvars   # à compléter, dont image_tag
-export TF_VAR_smpp_password='...'
+export TF_VAR_smpp_password='...'   # ou TF_VAR_twilio_auth_token, TF_VAR_ovh_sms_password, TF_VAR_clicksend_api_key
 
 terraform init
 terraform apply
@@ -38,7 +39,8 @@ Pour les versions suivantes : changer `image_tag`, puis `terraform apply`. Utili
 `sha-…` (ou de version) plutôt que `latest` : réutiliser un tag ne redéploie pas le conteneur.
 
 **IP sortante** : un Serverless Container n'a pas d'IP de sortie fixe. Si le fournisseur
-SMPP filtre par IP, le bind échoue : les messages sont réessayés puis conservés en DLQ.
+filtre par IP (souvent en SMPP, en option chez OVH), l'envoi échoue : les messages sont
+réessayés puis conservés en DLQ.
 
 Le package ghcr.io doit être **public** pour que Scaleway puisse tirer l'image sans
 identifiants (Package settings → Change visibility).
@@ -66,25 +68,34 @@ aws sqs send-message --region fr-par \
 |---|---|---|
 | `image_tag` | — | Tag de l'image à déployer (`sha-<commit>`) |
 | `image` | `ghcr.io/seemyping/sqs-to-smpp-gateway` | Image sans tag |
-| `smpp_addr` | — | SMSC, `hôte:port` |
-| `smpp_system_id` | — | Identifiant SMPP |
-| `smpp_password` | — | Sensible : passer par `TF_VAR_smpp_password` |
-| `smpp_source_addr` | — | Expéditeur par défaut |
+| `sms_protocol` | `smpp` | `smpp` ou `http` |
+| `sms_provider` | vide | En `http` : `twilio`, `ovh` ou `clicksend` |
+| `sms_sender` | vide | Expéditeur par défaut |
+| `smpp_addr`, `smpp_system_id` | vide | SMSC (`hôte:port`) et identifiant, en `smpp` |
+| `smpp_password` | vide | Sensible : passer par `TF_VAR_smpp_password` |
 | `smpp_tls` | `false` | Connexion TLS |
 | `smpp_system_type` | vide | Si le fournisseur en demande un |
+| `twilio_account_sid`, `twilio_messaging_service_sid` | vide | Twilio |
+| `twilio_auth_token` | vide | Sensible : `TF_VAR_twilio_auth_token` |
+| `ovh_sms_account`, `ovh_sms_login`, `ovh_sms_no_stop` | vide | OVH http2sms |
+| `ovh_sms_password` | vide | Sensible : `TF_VAR_ovh_sms_password` |
+| `clicksend_username` | vide | ClickSend |
+| `clicksend_api_key` | vide | Sensible : `TF_VAR_clicksend_api_key` |
 | `region` | `fr-par` | Région Scaleway |
 | `name` | `sqs-to-smpp` | Préfixe des ressources |
-| `max_scale` | `1` | Instances max : une session SMPP (bind) par instance |
+| `max_scale` | `1` | Instances max : en SMPP, une session (bind) par instance |
 | `container_timeout` | `30` | Timeout d'une requête (s) |
 | `visibility_timeout_seconds` | `60` | Doit rester > `container_timeout` (vérifié au plan) |
 | `message_max_age` | 4 jours | Rétention de la queue |
 | `dlq_message_max_age` | 14 jours | Rétention de la DLQ |
 | `log_level` | `info` | Passer à `debug` pour voir les headers du trigger |
 
-La liste complète est dans [`variables.tf`](variables.tf).
+Seules les variables non vides sont passées au conteneur, qui vérifie au démarrage que
+celles du protocole et du fournisseur choisis sont présentes. La liste complète est dans
+[`variables.tf`](variables.tf).
 
 ## Sécurité
 
-Le mot de passe SMPP et les clés SQS sont stockés **en clair dans le state** Terraform.
+Les mots de passe et clés API du fournisseur et les clés SQS sont stockés **en clair dans le state** Terraform.
 Utiliser un backend distant chiffré et à accès restreint (par exemple un bucket Scaleway
 Object Storage privé), jamais un state committé.

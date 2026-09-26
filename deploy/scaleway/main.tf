@@ -93,19 +93,33 @@ resource "scaleway_container" "main" {
     timeout           = "5s"
   }
 
-  environment_variables = {
-    SMPP_ADDR           = var.smpp_addr
-    SMPP_TLS            = tostring(var.smpp_tls)
-    SMPP_SYSTEM_ID      = var.smpp_system_id
-    SMPP_SYSTEM_TYPE    = var.smpp_system_type
-    SMPP_SOURCE_ADDR    = var.smpp_source_addr
-    SMPP_SUBMIT_TIMEOUT = var.smpp_submit_timeout
-    LOG_LEVEL           = var.log_level
-  }
+  # Only the settings of the selected protocol and provider are set: the
+  # empty ones are left out.
+  environment_variables = { for k, v in {
+    SMS_PROTOCOL                 = var.sms_protocol
+    SMS_PROVIDER                 = var.sms_provider
+    SMS_SENDER                   = var.sms_sender
+    SMS_API_TIMEOUT              = var.sms_api_timeout
+    SMPP_ADDR                    = var.smpp_addr
+    SMPP_TLS                     = tostring(var.smpp_tls)
+    SMPP_SYSTEM_ID               = var.smpp_system_id
+    SMPP_SYSTEM_TYPE             = var.smpp_system_type
+    SMPP_SUBMIT_TIMEOUT          = var.smpp_submit_timeout
+    TWILIO_ACCOUNT_SID           = var.twilio_account_sid
+    TWILIO_MESSAGING_SERVICE_SID = var.twilio_messaging_service_sid
+    OVH_SMS_ACCOUNT              = var.ovh_sms_account
+    OVH_SMS_LOGIN                = var.ovh_sms_login
+    OVH_SMS_NO_STOP              = tostring(var.ovh_sms_no_stop)
+    CLICKSEND_USERNAME           = var.clicksend_username
+    LOG_LEVEL                    = var.log_level
+  } : k => v if v != "" }
 
-  secret_environment_variables = {
-    SMPP_PASSWORD = var.smpp_password
-  }
+  secret_environment_variables = { for k, v in {
+    SMPP_PASSWORD     = var.smpp_password
+    TWILIO_AUTH_TOKEN = var.twilio_auth_token
+    OVH_SMS_PASSWORD  = var.ovh_sms_password
+    CLICKSEND_API_KEY = var.clicksend_api_key
+  } : k => v if v != "" }
 
   lifecycle {
     precondition {

@@ -1,8 +1,16 @@
 # Tag published by the CI: sha-<short commit> or a release version.
 image_tag = "sha-0123456"
 
-smpp_addr        = "smpp.example.com:2775"
-smpp_system_id   = "my-system-id"
-smpp_source_addr = "MYAPP"
+sms_sender = "MYAPP"
+
+# SMPP, towards any SMSC.
+sms_protocol   = "smpp"
+smpp_addr      = "smpp.example.com:2775"
+smpp_system_id = "my-system-id"
 # Prefer TF_VAR_smpp_password to keep the password out of files.
-# smpp_password = ""
+
+# Or an HTTP API: twilio, ovh or clicksend. Pass the secret through
+# TF_VAR_twilio_auth_token, TF_VAR_ovh_sms_password or TF_VAR_clicksend_api_key.
+# sms_protocol       = "http"
+# sms_provider       = "twilio"
+# twilio_account_sid = "AC..."

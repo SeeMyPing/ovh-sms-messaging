@@ -3,9 +3,9 @@
 // The trigger deletes the message when the response is 2xx and retries it
 // (up to three times) otherwise. Hence:
 //   - SMS sent: 200
-//   - transient failure (network, SMSC unavailable or throttling...): 503,
+//   - transient failure (network, provider unavailable or throttling...): 503,
 //     to be retried
-//   - permanent failure (invalid message, rejected by the SMSC): 200, since
+//   - permanent failure (invalid message, rejected by the provider): 200, since
 //     a retry would fail the same way; the failure is logged at error level.
 package handler
 
